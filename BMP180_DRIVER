@@ -1,0 +1,222 @@
+#include<linux/uaccess.h>
+#include<linux/types.h>
+#include<linux/cdev.h>
+#include<linux/i2c.h>
+#include<linux/init.h>
+#include<linux/module.h>
+#include<linux/kernel.h>
+#include<linux/slab.h>
+#include<linux/gfp.h>
+#include<linux/fs.h>
+#include<linux/device.h>
+#define DRIVER_NAME "BMP180_DRIVER"
+#define DEVICE_NAME "BMP180_TEMP"
+#define DRIVER_CLASS "180_DRIVER_CLASS"
+MODULE_LICENSE("GPL");
+int major;
+dev_t dev_no;
+int ac1,ac2,ac3,b1,b2,mb,mc,md;
+unsigned int ac4,ac5,ac6; 
+long ut;
+int temp;
+struct class *my_class;
+struct device *my_device;
+static int bmp180_open(struct inode *,struct file *);
+static ssize_t bmp180_read(struct file *,char __user *,size_t,loff_t * );
+static int bmp180_close(struct inode *inode,struct file *);
+static void get_constant_data(struct i2c_client *);
+static int get_temprature(struct i2c_client *client);
+static const struct i2c_device_id bmp180_id_table={DRIVER_NAME,0};
+static struct d_data
+{
+	struct cdev *my_cdev;
+	char kbuff[20];
+	struct i2c_client *my_client;
+}; 
+
+struct file_operations my_ops={
+//	.owner=THIS_MODULE,
+	.open=bmp180_open,
+	.read=bmp180_read,
+	.release=bmp180_close,
+};
+
+static int bmp180_open(struct inode *inode,struct file *file)
+{
+	struct d_data *my_device_data=container_of(inode->i_cdev,struct d_data,my_cdev);
+	file->private_data=my_device_data;
+	printk(KERN_INFO"\n file is open\n");
+	return 0;
+
+}
+static ssize_t bmp180_read(struct file *file,char __user *ubuff,size_t count,loff_t *fp )
+{
+	int res;
+	int *temp=kmalloc(sizeof(int),GFP_KERNEL);
+	struct d_data *my_device_data=(struct d_data *)file->private_data;
+	*temp=get_temprature(my_device_data->my_client);
+	printk(KERN_INFO"TEMP:%d\n", *temp);
+	res=copy_to_user((char *)ubuff,(char *)temp,strlen(temp)+1);
+	if(res==0)
+	{
+		printk(KERN_INFO"data read success no of byte read:%d\n",strlen(temp)+1);
+		return strlen(temp);
+	}
+	else
+	{
+		printk(KERN_INFO"read fail\n");
+		return -1;
+	}
+	return 0;
+}
+int bmp180_close(struct inode *inode, struct file *file)
+{
+	printk(KERN_INFO"Close function called");
+	return 0;
+}
+
+static int bmp180_probe(struct i2c_client *client,const struct i2c_device_id *id)
+{
+	int res;
+	printk(KERN_ERR"i am in probe function");
+	if (!i2c_check_functionality(client->adapter, I2C_FUNC_SMBUS_BYTE_DATA));
+	{
+		printk(KERN_ERR"\nI2C_FUNC_SMBUS_BYTE_DATA |I2C_FUNC_SMBUS_WORD_DATA function not suported\n");
+		return -1;
+	}
+	my_device=device_create(my_class,NULL,dev_no,NULL,DEVICE_NAME);
+	if(my_device==NULL)
+	{
+		printk(KERN_INFO"\n/dev/ device creation fail\n");
+		return -1;
+	}	
+	struct d_data *my_device_data=kmalloc(sizeof(struct d_data),GFP_KERNEL);
+	my_device_data->my_client=client;
+	my_device_data->my_cdev=cdev_alloc();
+	my_device_data->my_cdev->ops=&my_ops;
+	res=cdev_add(my_device_data->my_cdev,dev_no,1);
+	if(!res)
+	{
+		printk(KERN_ERR"\ncdev attechemt to dev no is fail...");
+		return -EFAULT;
+	}
+	my_device=device_create(my_class,NULL,dev_no,NULL,DEVICE_NAME);
+	if(my_device==NULL)
+	{
+		printk(KERN_INFO"\ndevice creation faile");
+		return -EFAULT;
+	}
+	i2c_set_clientdata(client,my_device_data);
+	my_device_data->my_client=client;
+//set the void *driver_data=client,which is the member of struct device structur and which is one of the member of client structure.....
+	get_constant_data(client);
+	return 0;
+}
+
+
+void get_constant_data(struct i2c_client *client)
+{
+	int res;
+	res = i2c_smbus_xfer (client->adapter,0x77, I2C_CLIENT_PEC,I2C_SMBUS_READ,0xAA,I2C_SMBUS_PROC_CALL,&ac1);
+	res = i2c_smbus_xfer (client->adapter,0x77, I2C_CLIENT_PEC,I2C_SMBUS_READ,0xAC,I2C_SMBUS_PROC_CALL,&ac2);
+	res = i2c_smbus_xfer (client->adapter,0x77, I2C_CLIENT_PEC,I2C_SMBUS_READ,0xAE,I2C_SMBUS_PROC_CALL,&ac3);
+	res = i2c_smbus_xfer (client->adapter,0x77, I2C_CLIENT_PEC,I2C_SMBUS_READ,0xB0,I2C_SMBUS_PROC_CALL,&ac4);
+	res = i2c_smbus_xfer (client->adapter,0x77, I2C_CLIENT_PEC,I2C_SMBUS_READ,0xB2,I2C_SMBUS_PROC_CALL,&ac5);
+	res = i2c_smbus_xfer (client->adapter,0x77, I2C_CLIENT_PEC,I2C_SMBUS_READ,0xB4,I2C_SMBUS_PROC_CALL,&ac6);
+	res = i2c_smbus_xfer (client->adapter,0x77, I2C_CLIENT_PEC,I2C_SMBUS_READ,0xB6,I2C_SMBUS_PROC_CALL,&b1);
+	res = i2c_smbus_xfer (client->adapter,0x77, I2C_CLIENT_PEC,I2C_SMBUS_READ,0xB8,I2C_SMBUS_PROC_CALL,&b2);
+	res = i2c_smbus_xfer (client->adapter,0x77, I2C_CLIENT_PEC,I2C_SMBUS_READ,0xBA,I2C_SMBUS_PROC_CALL,&mb);
+	res = i2c_smbus_xfer (client->adapter,0x77, I2C_CLIENT_PEC,I2C_SMBUS_READ,0xBC,I2C_SMBUS_PROC_CALL,&mc);
+	res = i2c_smbus_xfer (client->adapter,0x77, I2C_CLIENT_PEC,I2C_SMBUS_READ,0xBE,I2C_SMBUS_PROC_CALL,&md);
+/*	ac1 = i2c_smbus_read_byte_data (client,0xAA);
+	ac2 = i2c_smbus_read_byte_data (client,0xAC);
+	ac3 = i2c_smbus_read_byte_data (client,0xAE);
+	ac4 = i2c_smbus_read_byte_data (client,0xB0);
+	ac5 = i2c_smbus_read_byte_data (client,0xB2);
+	ac6 = i2c_smbus_read_byte_data (client,0xB4);
+    	 b1 = i2c_smbus_read_byte_data (client,0xB6);
+	 b2 = i2c_smbus_read_byte_data (client,0xB8);
+	 mb = i2c_smbus_read_byte_data (client,0xBA);
+	 mc = i2c_smbus_read_byte_data (client,0xBC);
+	 md = i2c_smbus_read_byte_data (client,0xBE);
+*/	printk(KERN_ERR"\n value of registers are \n ac1 = %d\nac2 = %d\nac2 = %d\n ac3 = %d\n ac4 = %d\n ac5 = %d\n ac6 = %d\n",ac1,ac2,ac3,ac4,ac5,ac6);
+	printk(KERN_ERR"\n b1 = %d\n b2 = %d\n mb = %d\n mc = %d\n mb = %d\n",b1,b2,mb,mc,mb);
+	return 0;
+}
+
+
+
+static int get_temprature(struct i2c_client *client)
+{
+	int res,x1,x2,b5;
+	res=i2c_smbus_write_byte_data (client,0xF4,0x2E);
+	//write is use to initiate the comuniction to the sensor,it indicate that user wants to read raw data from sensor
+//	sleep(0.005);//adc of device wants 4.5ms to convert analog valule to digital value
+	if(!res)
+	{
+		printk(KERN_ERR"\n device bussy please try again\n");
+		return -1;
+	}
+	//reading raw tempratur data and converting into integer	
+	ut = i2c_smbus_read_byte_data (client,0xF6);
+	ut = ut<<8;
+	ut = ut|i2c_smbus_read_byte_data (client,0xF7);
+	//conversion done
+	
+	//calculation of temprature
+	x1=(ut-ac6)*ac6/(2^15);
+	x2=mc*(2^11)/(x1+md);
+	b5=x1+x2;
+	return ((b5+8)/(2^4));
+}
+
+static int bmp180_remove(struct i2c_client *client)
+{
+	struct d_data *my_device_data = i2c_get_clientdata(client);
+	cdev_del(my_device_data->my_cdev);
+	device_destroy(my_class,dev_no);
+	printk(KERN_ERR"\ni am in remove function");
+	return 0;
+}
+static struct i2c_driver jarvice={
+	.driver={DRIVER_NAME,0},
+	.probe=bmp180_probe,
+	.remove=bmp180_remove,
+	.id_table=&bmp180_id_table,
+};
+static int __init bmp180_registration(void)
+{
+	int res;
+	res=alloc_chrdev_region(&dev_no,0,1,DRIVER_NAME);
+	if(res)
+	{
+		printk(KERN_ERR"\n device no registration/allocation fail....\n");
+		return -1;
+	}
+	major=MAJOR(dev_no);
+	my_class=class_create(THIS_MODULE,DRIVER_CLASS);
+	if(my_class==NULL)
+	{
+		printk(KERN_ERR"\ndriver class creation fail\n");
+		return -1;
+	}
+	res=i2c_add_driver(&jarvice);
+	if(res)
+	{
+		printk(KERN_ERR"\ni2c driver registration fail:");
+		return -1;
+	}
+	printk(KERN_ERR"i am in init function");
+	return 0;
+}
+static void __exit bmp180_exit(void)
+{
+	dev_t devno;
+	printk(KERN_ERR"i am in exit function");
+	class_destroy(my_class);
+	devno=MKDEV(major,0);
+	unregister_chrdev_region(dev_no,0);
+	return(i2c_del_driver(&jarvice));
+} 
+module_init(bmp180_registration);
+module_exit(bmp180_exit);
